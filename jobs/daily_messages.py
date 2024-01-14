@@ -58,6 +58,6 @@ class DailyMessageJob:
         updater.job_queue.run_daily(self.send_daily_message, time=datetime.time(hour=7, minute=0, tzinfo=tz), context={'message_text': morning_message})
         updater.job_queue.run_daily(self.send_daily_message, time=datetime.time(hour=19, minute=0, tzinfo=tz), context={'message_text': evening_message})
         # Для daily_message установите необходимое время
-        updater.job_queue.run_daily(self.send_addresses, time=datetime.time(hour=0, minute=55, tzinfo=tz))
-        updater.job_queue.run_daily(self.send_addresses, time=datetime.time(hour=12, minute=7, tzinfo=tz))
+        updater.job_queue.run_daily(self.send_addresses, time=datetime.time(hour=19, minute=0, tzinfo=tz))
+        updater.job_queue.run_daily(self.send_addresses, time=datetime.time(hour=12, minute=0, tzinfo=tz))
         updater.job_queue.run_daily(self.send_addresses, time=datetime.time(hour=16, minute=0, tzinfo=tz))
