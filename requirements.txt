@@ -2,7 +2,6 @@ requests
 uuid
 asyncio
 python-telegram-bot==13.7
-logging
 random2
 unittest2
 telethon
