@@ -78,6 +78,18 @@ def ask_for_bonus_code(update: Update, context: CallbackContext) -> None:
     update.message.reply_text("Напиши бонус-код в чат")
     return BONUS_CODE  # Это состояние для ConversationHandler
 
+def is_promo_code_active_for_user(user_id):
+    conn = sqlite3.connect('subscribe.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT activated_by_user_id FROM promocodes WHERE active = 1")
+    active_promocodes = cursor.fetchall()
+    conn.close()
+    for record in active_promocodes:
+        activated_user_ids = record[0].split(',') if record[0] else []
+        if str(user_id) in activated_user_ids:
+            return True
+    return False
+
 def check_bonus_code(update: Update, context: CallbackContext) -> None:
     user_id = update.message.chat_id
     entered_code = update.message.text.strip()
@@ -503,12 +515,13 @@ def button(update: Update, context: CallbackContext) -> None:
 
         reply_keyboard = [
             ["Повідомити нову адресу"],
-            ["Відкрити карту адрес"],
             ["Получить бонус-код"],
             ["Активировать промокод"]
         ]
         if user_id in moderator_ids:
             reply_keyboard.append(["Рассылка модератором"])
+        if is_promo_code_active_for_user(user_id):
+            reply_keyboard.append(["Відкрити карту адрес"])
         update.effective_message.reply_text(
             'Оберіть опцію:',
             reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=False, resize_keyboard=True)
