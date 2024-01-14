@@ -4,7 +4,7 @@ EXACT_ADDRESS, DETAILS, PHOTO, YR_MODERATION, BONUS_CODE = range(5)
 
 bot = None
 user_data = {}
-moderator_ids = [5873932146]
+moderator_ids = [6964683351]
 # classes
 dbm = ChannelDB("channels_list.db")
 info_dbs = InfoDb()
