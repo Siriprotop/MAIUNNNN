@@ -38,6 +38,39 @@ def format_message(address, details, photo, date_time):
     message_parts = [address, details if details.strip() != '' else None, photo if photo.strip() != '' else None, date_time]
     return "\n".join(filter(None, message_parts))
 
+def process_message_for_publication(update, context):
+    print('CALLED')
+    user_id = user_data['user_id']
+    print(user_id)
+    # Получаем данные из user_data
+    address = user_data[user_id].get('EXACT_ADDRESS', '').strip()
+    details = user_data[user_id].get('DETAILS', '').strip()
+    photo_url = user_data[user_id].get('PHOTO', '').strip()
+    formatted_date = user_data[user_id].get('DATE_TIME', '').strip()
+    print(f"ADDRESS DETAILS {address} {details}")
+
+    # Подготавливаем запросы к Chat GPT для модерации
+    prompt_address = f"Візьми це повідомлення: {address}, та проведи модерацію та виправленняа, а саме: Видали з тексту всі образи, лайки та сленги. Прибери всі спец.символи, теги, посилання. Переклади текст українською"
+    prompt_details = f"Візьми це повідомлення: {details}, та проведи модерацію та виправлення, а саме: Видали з тексту всі образи, лайки та сленги. Прибери всі спец.символи, теги, посилання. Переклади текст українською"
+
+    # Отправляем запросы к Chat GPT (псевдокод, так как интеграция недоступна)
+    moderated_address = send_to_chat_gpt(prompt_address)
+    moderated_details = send_to_chat_gpt(prompt_details)
+    print(f"ADDRESS {moderated_address}\n\n")
+
+    print(f"DETAILS:{moderated_details}\n\n")
+    user_data[user_id]['EXACT_ADDRESS'] = moderated_address
+    user_data[user_id]['DETAILS'] = moderated_details
+    # Формируем итоговое сообщение для публикации
+    post_id = dbs.add_post(user_id, moderated_address, moderated_details, photo_url, formatted_date)
+    if details:
+        info_dbs.add_address(moderated_address, moderated_details)
+    user_data[user_id]['POST_ID'] = post_id
+    final_message = compose_final_message(moderated_address, moderated_details, photo_url)
+    print(final_message)
+    # Публикация сообщения
+    publish_message_city(update, context)
+    return ConversationHandler.END
 def format_without_photo(address, details, date_time):
     message_parts = [address, details if details.strip() != '' else None, date_time]
     return "\n".join(filter(None, message_parts))
@@ -46,12 +79,30 @@ def generate_bonus_code(user_id, conn):
     cursor = conn.cursor()
 
     # Проверяем, есть ли уже активный промокод у пользователя
-    cursor.execute("SELECT promocode, expiry_date FROM promocodes WHERE user_id = ? AND active = 1", (user_id,))
+    cursor.execute("SELECT promocode, expiry_date, count FROM promocodes WHERE user_id = ? AND active = 1", (user_id,))
     active_promocode = cursor.fetchone()
+    
     if active_promocode:
-        promocode, expiry_date = active_promocode
+        promocode, expiry_date, count = active_promocode
+        print(count)
+        if count is None:
+            count = 0
         if datetime.now() <= datetime.strptime(expiry_date, '%Y-%m-%d %H:%M:%S'):
-            return f"У вас уже есть активный промокод: {promocode}."
+            return f"ПОДЕЛИСЬ ЭТИМ СООБЩЕНИЕМ С ДРУГОМ и получи PREMIUM ДОСТУП к каналу на 1 месяц:\n" \
+                    f"📍 Доступ к карте адресов\n" \
+                    f"🤡 Отсутствие рекламы и новостей\n" \
+                    f"🚨 Уведомления об опасной зоне\n" \
+                    f"💵 Участие в акции “Лучший реферал”\n\n" \
+                    f"Твой бонус-код: {promocode}\n" \
+                    f"Он действует 48 часов.\n\n" \
+                    f"Инструкция активации для друга:\n" \
+                    f"1) Зайди в бот https://t.me/sasadas_bot/\n" \
+                    f"2) Выбери 'Получить бонус-код'\n" \
+                    f"3) Отправь бонус-код боту.\n\n" \
+                    f"Ты пригласил уже {count} подписчиков.\n" \
+                    f"3 лучших реферала, каждый месяц\n" \
+                    f"получают в подарок 100$. Рефералы\n" \
+                    f"будут объявлены анонимно."
     # Проверка, подписан ли пользователь более 24 часов
     cursor.execute("SELECT subscribe_date FROM subscribers WHERE user_id = ?", (user_id,))
     subscribe_date = cursor.fetchone()
@@ -71,7 +122,11 @@ def generate_bonus_code(user_id, conn):
                 f"Инструкция активации для друга:\n" \
                 f"1) Зайди в бот https://t.me/sasadas_bot/\n" \
                 f"2) Выбери 'Получить бонус-код'\n" \
-                f"3) Отправь бонус-код боту.\n"
+                f"3) Отправь бонус-код боту.\n\n" \
+                f"Ты пригласил уже {count} подписчиков.\n" \
+                f"3 лучших реферала, каждый месяц\n" \
+                f"получают в подарок 100$. Рефералы\n" \
+                f"будут объявлены анонимно."
 
     return message
 def ask_for_bonus_code(update: Update, context: CallbackContext) -> None:
@@ -96,6 +151,11 @@ def check_bonus_code(update: Update, context: CallbackContext) -> None:
     conn = sqlite3.connect('subscribe.db')
     cursor = conn.cursor()
 
+    cursor.execute("SELECT user_id FROM promocodes WHERE promocode = ? AND active = 1", (entered_code,))
+    promo_creator = cursor.fetchone()
+    if promo_creator and promo_creator[0] == user_id:
+        update.message.reply_text("Вы не можете активировать свой промокод!")
+        return ConversationHandler.END
     # Проверяем, активировал ли пользователь уже какой-либо промокод
     cursor.execute("SELECT promocode, expiry_date FROM promocodes WHERE activated_by_user_id LIKE ? AND active = 1", (f'%{user_id}%',))
     active_promocodes = cursor.fetchall()
@@ -118,7 +178,7 @@ def check_bonus_code(update: Update, context: CallbackContext) -> None:
             activated_user_ids_str = str(activated_user_ids_str)
         
         activated_user_ids = activated_user_ids_str.split(',') if activated_user_ids_str else []
-
+        
         if datetime.now() <= expiry_date:
             if str(user_id) not in activated_user_ids:
                 activated_user_ids.append(str(user_id))
@@ -415,28 +475,75 @@ def button(update: Update, context: CallbackContext) -> None:
                     try:
                         context.bot.send_message(chat_id=user_id, text=format_without_photo(address, details, date_time))
                 
-                    except telegram.error.BadRequest as e:
+                    except Exception as e:
                         print(f"Failed to send message to user {user_id}: {e}")
+                context.user_data.clear()
                 return ConversationHandler.END
             else:
                 print(f"Файл данных для города {city_to_check} не найден.")
                 context.user_data.clear()  # Используйте clear() для очистки данных
                 return ConversationHandler.END
         print('GGG')
+        city = user_data[user_id].get('city')
+        if city is None:
+            query.message.reply_text("Выберите город с помощью команды /city!")
+            return ConversationHandler.END
         query.message.reply_text("<b>Дякуємо, що залишили нову адресу. Ваша інформація буде перебувати на перевірці, і незабаром буде опублікована.</b>", parse_mode='HTML')
         now = datetime.now()
         month_name = ukrainian_months[now.month]  # Get Ukrainian month name
         formatted_date = now.strftime(f"%d {month_name}, %H:%M")  # Format the date
         user_data[user_id]['DATE_TIME'] = formatted_date
-        city = user_data[user_id].get('city', '').strip()
+        user_data['user_id'] = user_id
         context.user_data['city_name'] = city
+        user_data[user_id]['user_id'] = user_id
         if city in city_files:
             context.user_data['city_file'] = city_files[city]
         if user_data[user_id]['DETAILS']:
-            process_message_for_publication(update, context)
+            message_text = (
+                "Опублікувати наступну адресу?\n"
+                f"{user_data[user_id]['EXACT_ADDRESS']}\n"
+                f"{user_data[user_id]['DETAILS']}\n"
+                f"{user_data[user_id]['DATE_TIME']}\n"
+                f"{user_data[user_id]['city']}\n"
+                f"{user_id}\n"
+            )
+            keyboard = [
+                [
+                    InlineKeyboardButton("N", callback_data=f"no_{user_id}"),
+                    InlineKeyboardButton("YR", callback_data=f"yr_{user_id}"),
+                    InlineKeyboardButton("YP", callback_data=f"yp_{user_id}"),
+                    InlineKeyboardButton("CHATGPT", callback_data=f"chatgpt_{user_id}")]
+                
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            context.bot.send_message(
+                chat_id=6964683351,
+                text=message_text,
+                reply_markup=reply_markup
+            )
+
             return ConversationHandler.END
         else:
-            process_message_for_publication(update, context)
+            message_text = (
+                "Опублікувати наступну адресу?\n"
+                f"{user_data[user_id]['EXACT_ADDRESS']}\n"
+                f"{user_data[user_id]['DATE_TIME']}\n"
+                f"{user_data[user_id]['city']}\n"
+                f"{user_id}\n"
+            )
+            keyboard = [
+                [
+                    InlineKeyboardButton("N", callback_data=f"no_{user_id}"),
+                    InlineKeyboardButton("YR", callback_data=f"yr_{user_id}"),
+                    InlineKeyboardButton("YP", callback_data=f"yp_{user_id}"),
+                    InlineKeyboardButton("CHATGPT", callback_data=f"chatgpt_{user_id}")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            context.bot.send_message(
+                chat_id=6964683351,
+                text=message_text,
+                reply_markup=reply_markup
+            )
             return ConversationHandler.END
 
     if query.data == 'skip_details':
@@ -469,6 +576,12 @@ def button(update: Update, context: CallbackContext) -> None:
     elif query.data.startswith('yr_'):
         query.edit_message_text(text="This post has already published")
         return yr_moderation(update, context)
+    elif query.data.startswith('chatgpt_'):
+        try:
+            process_message_for_publication(update, context)
+            query.edit_message_text(text="This post has already been published")
+        except Exception as e:
+            print(e)
     elif query.data.startswith('yp'):
         user_id_to_edit = int(query.data[3:])
         if user_id_to_edit in user_data:
@@ -628,7 +741,7 @@ def updaterPhoto(update: Update, context: CallbackContext) -> int:
                 for user_id in user_ids:
                     try:
                         context.bot.send_message(chat_id=user_id, text=format_message(address, details, photo, date_time))
-                    except telegram.error.BadRequest as e:
+                    except Exception as e:
                         print(f"Failed to send message to user {user_id}: {e}")
 
             else:
@@ -640,12 +753,7 @@ def compose_final_message(address, details, photo_url):
 
 
 def publish_message_city(update: Update, context: CallbackContext):
-    try:
-        user_id = update.message.chat_id
-    except Exception as e:
-        query = update.callback_query
-        query.answer()
-        user_id = query.message.chat_id
+    user_id = user_data['user_id']
     city_file = context.user_data['city_file']
     city_name = context.user_data['city_name']
 
@@ -680,49 +788,14 @@ def publish_message_city(update: Update, context: CallbackContext):
                 context.bot.send_message(chat_id=channel_id, text=text)
     except Exception as e:
         print(e)
-def process_message_for_publication(update, context):
-    try:
-        user_id = update.message.chat_id
-    except Exception as e:
-        query = update.callback_query
-        query.answer()
-        user_id = query.message.chat_id
-    # Получаем данные из user_data
-    address = user_data[user_id].get('EXACT_ADDRESS', '').strip()
-    details = user_data[user_id].get('DETAILS', '').strip()
-    photo_url = user_data[user_id].get('PHOTO', '').strip()
-    formatted_date = user_data[user_id].get('DATE_TIME', '').strip()
-    print(f"ADDRESS DETAILS {address} {details}")
-
-    # Подготавливаем запросы к Chat GPT для модерации
-    prompt_address = f"Візьми це повідомлення: {address}, та проведи модерацію та виправленняа, а саме: Видали з тексту всі образи, лайки та сленги. Прибери всі спец.символи, теги, посилання. Переклади текст українською"
-    prompt_details = f"Візьми це повідомлення: {details}, та проведи модерацію та виправлення, а саме: Видали з тексту всі образи, лайки та сленги. Прибери всі спец.символи, теги, посилання. Переклади текст українською"
-
-    # Отправляем запросы к Chat GPT (псевдокод, так как интеграция недоступна)
-    moderated_address = send_to_chat_gpt(prompt_address)
-    moderated_details = send_to_chat_gpt(prompt_details)
-    print(f"ADDRESS {moderated_address}\n\n")
-
-    print(f"DETAILS:{moderated_details}\n\n")
-    user_data[user_id]['EXACT_ADDRESS'] = moderated_address
-    user_data[user_id]['DETAILS'] = moderated_details
-    # Формируем итоговое сообщение для публикации
-    post_id = dbs.add_post(user_id, moderated_address, moderated_details, photo_url, formatted_date)
-    if details:
-        info_dbs.add_address(moderated_address, moderated_details)
-    user_data[user_id]['POST_ID'] = post_id
-    final_message = compose_final_message(moderated_address, moderated_details, photo_url)
-    print(final_message)
-    # Публикация сообщения
-    publish_message_city(update, context)
-    return ConversationHandler.END
 
 def send_to_chat_gpt(prompt):
     openai.api_key = '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'
     try:
+
         print(prompt)
         response = openai.ChatCompletion.create(
-            model="gpt-4",
+            model="gpt-3.5-turbo-0301",
             messages=[
                 {"role": "system", "content": "Ти - Модератор, який допомогає перевіряти і перероблювати пости."},
                 {"role": "user", "content": prompt}
@@ -769,15 +842,37 @@ def photo(update, context: CallbackContext) -> int:
         # Сначала соберите все части сообщения, проверяя наличие содержимого.
         address = user_data[user_id].get('EXACT_ADDRESS', '').strip()
         details = user_data[user_id].get('DETAILS', '').strip()
-        city = user_data[user_id].get('city', '').strip()
+        city = user_data[user_id].get('city')
+        if city is None:
+            update.message.reply_text("Выберите город с помощью команды /city!")
+            return ConversationHandler.END
         context.user_data['city_name'] = city
         if city in city_files:
             context.user_data['city_file'] = city_files[city]
         photo_status = user_data[user_id].get('PHOTO', '').strip()
         date_time = user_data[user_id].get('DATE_TIME', '').strip()
         user_id_str = str(user_id).strip()
+        message_parts = [address, details if details else "", city, photo_status, date_time, user_id_str]
+
+        # Объедините непустые строки, вставляя перенос строки между ними.
+        message_text = "\n".join(part for part in message_parts if part)
+
+        # Добавьте заголовок сообщения.
+        message_text = "Опублікувати наступну адресу?\n" + message_text
+
+
+        keyboard = [
+            [InlineKeyboardButton("N", callback_data=f"no_{user_id}"),
+            InlineKeyboardButton("YR", callback_data=f"yr_{user_id}"),
+            InlineKeyboardButton("YP", callback_data=f"yp_{user_id}"),
+            InlineKeyboardButton("CHATGPT", callback_data=f"chatgpt_{user_id}")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
         update.message.reply_text("<b>Дякуємо, що залишили нову адресу. Ваша інформація буде перебувати на перевірці, і незабаром буде опублікована.</b>", parse_mode='HTML')
-        process_message_for_publication(update, context)
+        user_data['user_id'] = user_id
+        sent_message = context.bot.send_message(chat_id=6964683351, text=message_text, reply_markup=reply_markup)
+        user_data[user_id]['POST_ID'] = sent_message.message_id
+        # process_message_for_publication(update, context)
         return ConversationHandler.END
     except Exception as e:
         print(f"PHOTO {e}")
@@ -798,12 +893,15 @@ def skip_photo(update: Update, context: CallbackContext) -> int:
 
     print(123)
     print(context.user_data)
+    user_id = update.message.chat_id
+    print(f"DSASADAD {user_id}")
+    user_data['user_id'] = user_id
     if 'EDIT_USER_ID' in context.user_data:
         print('SKIP PHOTO DPLASJDAIOHAS9YW98FWYRQ98WFHESU89FHSA9FHD')
         context.user_data.clear()
     update.message.reply_text("<b>Дякуємо, що залишили нову адресу. Ваша інформація буде перебувати на перевірці, і незабаром буде опублікована.</b>", parse_mode='HTML')
-    process_message_for_publication(update, context)
-    return CallbackQueryHandler.END
+    context.user_data.clear()
+    return ConversationHandler.END
 
 def cancel(update: Update, context: CallbackContext) -> int:
     update.message.reply_text('Отменено.', reply_markup=ReplyKeyboardRemove())
