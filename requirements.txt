@@ -7,4 +7,4 @@ unittest2
 telethon
 snscrape
 datetime
-openai==0.10.2
+openai==0.28.0
