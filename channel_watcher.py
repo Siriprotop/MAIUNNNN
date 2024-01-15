@@ -12,6 +12,7 @@ from config import channelsss
 class TelegramChannelWatcher:
     def __init__(self, dbm, dbs, bot):
         self.bot = bot
+        print(self.bot)
         self.dbm = dbm
         self.dbs = dbs
         self.db = DataBase("channels.db")
@@ -21,7 +22,7 @@ class TelegramChannelWatcher:
         user_ids = self.dbs.get_users_by_city(channel_info.get('user_file'))
         for user_id in user_ids:
             for city_channel in channelsss:
-                res1 = is_user_in_channel(bot, city_channel, user_id)
+                res1 = is_user_in_channel(self.bot, city_channel, user_id)
                 if res1 == True:
                     break
             if res1 == True:
@@ -33,19 +34,23 @@ class TelegramChannelWatcher:
     def chat_gpt_query(self, message):
         openai.api_key = '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'
         try:
-            response = openai.Completion.create(
-                model="gpt-3.5-turbo-instruct",
-                prompt=f"Сообщение далее содержит примерное описание характера местоположения, примерного адреса или направления движения? Напиши YES если хоть частично содержит, напиши NO если не содержит абсолютно. Сообщение: {message}",
-                max_tokens=50
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo-0301",
+                messages=[
+                    {"role": "system", "content": "Ти - Модератор, який допомогає перевіряти і перероблювати пости."},
+                    {"role": "user", "content": f"Сообщение далее содержит примерное описание характера местоположения, примерного адреса или направления движения? Напиши YES если хоть частично содержит, напиши NO если не содержит абсолютно. Сообщение: {message}"}
+                ]
             )
-            first_response = response.choices[0].text.strip()
+            first_response = response['choices'][0]['message']['content']
             if "YES" in first_response.upper():
-                moderated_response = openai.Completion.create(
-                    model="gpt-3.5-turbo-instruct",
-                    prompt=f"Візьми це повідомлення: '{message}', та проведи модерацію та виправлення, а саме: Видали з тексту всі образи, лайки та сленги. Прибери всі спец.символи, теги, посилання. Переклади текст українською. Залиш тільки адрес і город і важну інформацію, і все. Без всяких лишних комментариев",
-                    max_tokens=150
+                moderated_response = openai.ChatCompletion.create(
+                    model="gpt-3.5-turbo-0301",
+                    messages=[
+                        {"role": "system", "content": "Ти - Модератор, який допомогає перевіряти і перероблювати пости."},
+                        {"role": "user", "content": f"Візьми це повідомлення: '{message}', та проведи модерацію та виправлення, а саме: Видали з тексту всі образи, лайки та сленги. Прибери всі спец.символи, теги, посилання. Переклади текст українською. Залиш тільки адрес і город і важну інформацію, і все. Без всяких лишних комментариев"}
+                    ]
                 )
-                return moderated_response.choices[0].text.strip()
+                return moderated_response['choices'][0]['message']['content']
             return first_response
         except Exception as e:
             print(f"Ошибка при запросе к GPT: {e}")
