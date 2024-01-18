@@ -1,7 +1,7 @@
 requests
 uuid
 asyncio
-googleapiclient
+google-api-python-client
 python-telegram-bot==13.7
 random2
 unittest2
