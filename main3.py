@@ -42,25 +42,56 @@ def process_message_for_publication(update, context):
     print('CALLED')
     user_id = user_data['user_id']
     print(user_id)
-    # Получаем данные из user_data
+
+    # Retrieve data from user_data
     address = user_data[user_id].get('EXACT_ADDRESS', '').strip()
     details = user_data[user_id].get('DETAILS', '').strip()
     photo_url = user_data[user_id].get('PHOTO', '').strip()
+    print(photo_url)
     formatted_date = user_data[user_id].get('DATE_TIME', '').strip()
+    user_id_str = str(user_id).strip()
+
+    # Define city variable if not present
+    city = user_data[user_id].get('CITY', '').strip()
+
+    message_parts = [address, details, city, photo_url, formatted_date, user_id_str]
+
+    # Join non-empty strings, inserting a newline between them
+    message_text = "\n".join(part for part in message_parts if part)
+
+    # Add the message header
+    message_text = "Опублікувати наступну адресу?\n" + message_text
+
+
+    keyboard = [
+        [InlineKeyboardButton("N", callback_data=f"no_{user_id}"),
+        InlineKeyboardButton("YR", callback_data=f"yr_{user_id}"),
+        InlineKeyboardButton("YP", callback_data=f"yp_{user_id}"),
+        InlineKeyboardButton("CHATGPT", callback_data=f"chatgpt_{user_id}")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     print(f"ADDRESS DETAILS {address} {details}")
-
-    # Подготавливаем запросы к Chat GPT для модерации
-    prompt_address = f"Візьми це повідомлення: {address}, та проведи модерацію та виправленняа, а саме: Видали з тексту всі образи, лайки та сленги. Прибери всі спец.символи, теги, посилання. Переклади текст українською"
-    prompt_details = f"Візьми це повідомлення: {details}, та проведи модерацію та виправлення, а саме: Видали з тексту всі образи, лайки та сленги. Прибери всі спец.символи, теги, посилання. Переклади текст українською"
-
-    # Отправляем запросы к Chat GPT (псевдокод, так как интеграция недоступна)
-    moderated_address = send_to_chat_gpt(prompt_address)
-    moderated_details = send_to_chat_gpt(prompt_details)
-    print(f"ADDRESS {moderated_address}\n\n")
-
-    print(f"DETAILS:{moderated_details}\n\n")
+    moderated_address = filter_and_translate_address(address)
+    if moderated_address == 404:
+        context.bot.send_message(
+            chat_id=6964683351,
+            text=message_text,
+            reply_markup=reply_markup
+        )
+        return    
+    if details:
+        moderated_details = filter_and_translate_details(details)
+        if moderated_details == 404:
+            context.bot.send_message(
+                chat_id=6964683351,
+                text=message_text,
+                reply_markup=reply_markup
+            )
+            return
+    
     user_data[user_id]['EXACT_ADDRESS'] = moderated_address
-    user_data[user_id]['DETAILS'] = moderated_details
+    if details:
+        user_data[user_id]['DETAILS'] = moderated_details
     # Формируем итоговое сообщение для публикации
     post_id = dbs.add_post(user_id, moderated_address, moderated_details, photo_url, formatted_date)
     if details:
@@ -77,7 +108,7 @@ def format_without_photo(address, details, date_time):
 
 def generate_bonus_code(user_id, conn):
     cursor = conn.cursor()
-
+    count = 0
     # Проверяем, есть ли уже активный промокод у пользователя
     cursor.execute("SELECT promocode, expiry_date, count FROM promocodes WHERE user_id = ? AND active = 1", (user_id,))
     active_promocode = cursor.fetchone()
@@ -103,15 +134,21 @@ def generate_bonus_code(user_id, conn):
                     f"3 лучших реферала, каждый месяц\n" \
                     f"получают в подарок 100$. Рефералы\n" \
                     f"будут объявлены анонимно."
+        else:
+            print("EXPIRED")
+            # Promo code has expired - deactivate it
+            cursor.execute("DELETE FROM promocodes WHERE user_id = ? AND promocode = ?", (user_id, promocode))
+            conn.commit()
     # Проверка, подписан ли пользователь более 24 часов
     cursor.execute("SELECT subscribe_date FROM subscribers WHERE user_id = ?", (user_id,))
     subscribe_date = cursor.fetchone()
     bonus_code = "B" + str(random.randint(1000, 9999))
     expiry_date = datetime.now() + timedelta(minutes=1)
+    print("DSASADADSA")
     cursor.execute("INSERT INTO promocodes (user_id, promocode, expiry_date, active, count) VALUES (?, ?, ?, 1, 0)",
                     (user_id, bonus_code, expiry_date.strftime('%Y-%m-%d %H:%M:%S')))
-    conn.commit()
-
+    result = conn.commit()
+    print(result)
     message = f"ПОДЕЛИСЬ ЭТИМ СООБЩЕНИЕМ С ДРУГОМ и получи PREMIUM ДОСТУП к каналу на 1 месяц:\n" \
                 f"📍 Доступ к карте адресов\n" \
                 f"🤡 Отсутствие рекламы и новостей\n" \
@@ -131,7 +168,7 @@ def generate_bonus_code(user_id, conn):
     return message
 def ask_for_bonus_code(update: Update, context: CallbackContext) -> None:
     update.message.reply_text("Напиши бонус-код в чат")
-    return BONUS_CODE  # Это состояние для ConversationHandler
+    return BONUS_CODE  
 
 def is_promo_code_active_for_user(user_id):
     conn = sqlite3.connect('subscribe.db')
@@ -167,11 +204,11 @@ def check_bonus_code(update: Update, context: CallbackContext) -> None:
             return ConversationHandler.END
 
     # Проверяем наличие введенного промокода в базе и его срок действия
-    cursor.execute("SELECT promocode, expiry_date, activated_by_user_id, count FROM promocodes WHERE promocode = ? AND active = 1", (entered_code,))
+    cursor.execute("SELECT user_id, promocode, expiry_date, activated_by_user_id, count FROM promocodes WHERE promocode = ? AND active = 1", (entered_code,))
     code_data = cursor.fetchone()
 
     if code_data:
-        promocode, expiry_date, activated_user_ids_str, count = code_data
+        promo_user_id, promocode, expiry_date, activated_user_ids_str, count = code_data
         expiry_date = datetime.strptime(expiry_date, '%Y-%m-%d %H:%M:%S')
 
         if not isinstance(activated_user_ids_str, str):
@@ -187,6 +224,14 @@ def check_bonus_code(update: Update, context: CallbackContext) -> None:
                 cursor.execute("UPDATE promocodes SET activated_by_user_id = ?, count = ? WHERE promocode = ?", (new_user_ids_str, new_count, entered_code))
                 conn.commit()
                 update.message.reply_text("✅ Ваш промокод успешно активирован.")
+                congratulatory_message = (
+                    "🎁 Поздравляем! Кто-то, только что, активировал ваш бонус-код и вы получили +1 реферала. "
+                    "Вы оба получаете +30 дней Premium подписки на бота, а так же шанс получить 100$ в конце месяца. "
+                    "Рефералы будут объявлены анонимно. Деньги зачислены на USDT кошелек.\n\n"
+                    "🤝 Спасибо за помощь проекту. Это очень важно для нас."
+                )
+                context.bot.send_message(chat_id=promo_user_id, text=congratulatory_message)
+            
             else:
                 update.message.reply_text("❌ Вы уже активировали этот промокод.")
             return ConversationHandler.END
@@ -215,7 +260,7 @@ def broadcast(update: Update, context: CallbackContext, user_ids) -> None:
             try:
                 # Attempt to send the message
                 context.bot.send_message(chat_id=user_id, text=message.text)
-            except telegram.error.BadRequest as e:
+            except Exception as e:
                 # Log the error and continue with the next user ID
                 print(f"Failed to send message to {user_id}: {e}")
     elif message.photo:
@@ -224,7 +269,7 @@ def broadcast(update: Update, context: CallbackContext, user_ids) -> None:
         for user_id in user_ids:
             try:
                 context.bot.send_photo(chat_id=user_id, photo=photo)
-            except telegram.error.BadRequest as e:
+            except Exception as e:
                 # Log the error and continue with the next user ID
                 print(f"Failed to send message to {user_id}: {e}")
     elif message.document:
@@ -233,7 +278,7 @@ def broadcast(update: Update, context: CallbackContext, user_ids) -> None:
         for user_id in user_ids:
             try:
                 context.bot.send_document(chat_id=user_id, document=document)
-            except telegram.error.BadRequest as e:
+            except Exception as e:
                 # Log the error and continue with the next user ID
                 print(f"Failed to send message to {user_id}: {e}")
 def upload_image_to_imgur(image_path, client_id):
@@ -297,7 +342,7 @@ def broadcast_to_all_cities(update: Update, context: CallbackContext) -> int:
                     context.bot.send_photo(chat_id=channel_id, photo=photo)
                 elif document:
                     context.bot.send_document(chat_id=channel_id, document=document)
-            except telegram.error.BadRequest as e:
+            except Exception as e:
                 print(f"Failed to send message to channel {channel_id}: {e}")
 
         update.message.reply_text("Content sent to all city channels and users.")
@@ -429,11 +474,18 @@ def yr_moderation(update: Update, context: CallbackContext) -> int:
     context.user_data['EDIT_USER_ID'] = user_id_to_edit  # Сохранение user_id для дальнейшего использования
     print(user_id_to_edit)
     # Переход к шагу ввода точного адреса
+    keyboard = [
+        [InlineKeyboardButton("Публикуем", callback_data=f"publish_address_{user_id_to_edit}"),
+         InlineKeyboardButton("Не публикуем", callback_data=f"do_not_publish_address_{user_id_to_edit}")],
+        # Other buttons...
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     update.effective_message.reply_text(
         "<b>1) Введите точный адрес (обязательно)</b>\n"
         "Чем точнее будет адрес, тем лучше.\n"
         "Например: Богдана Хмельницкого, 33.",
-        parse_mode='HTML'
+        parse_mode='HTML',
+        reply_markup=reply_markup
     )
     return EXACT_ADDRESS  # Переход к следующему состоянию диалога
 
@@ -499,51 +551,10 @@ def button(update: Update, context: CallbackContext) -> None:
         if city in city_files:
             context.user_data['city_file'] = city_files[city]
         if user_data[user_id]['DETAILS']:
-            message_text = (
-                "Опублікувати наступну адресу?\n"
-                f"{user_data[user_id]['EXACT_ADDRESS']}\n"
-                f"{user_data[user_id]['DETAILS']}\n"
-                f"{user_data[user_id]['DATE_TIME']}\n"
-                f"{user_data[user_id]['city']}\n"
-                f"{user_id}\n"
-            )
-            keyboard = [
-                [
-                    InlineKeyboardButton("N", callback_data=f"no_{user_id}"),
-                    InlineKeyboardButton("YR", callback_data=f"yr_{user_id}"),
-                    InlineKeyboardButton("YP", callback_data=f"yp_{user_id}"),
-                    InlineKeyboardButton("CHATGPT", callback_data=f"chatgpt_{user_id}")]
-                
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            context.bot.send_message(
-                chat_id=6964683351,
-                text=message_text,
-                reply_markup=reply_markup
-            )
-
+            process_message_for_publication(update, context)
             return ConversationHandler.END
         else:
-            message_text = (
-                "Опублікувати наступну адресу?\n"
-                f"{user_data[user_id]['EXACT_ADDRESS']}\n"
-                f"{user_data[user_id]['DATE_TIME']}\n"
-                f"{user_data[user_id]['city']}\n"
-                f"{user_id}\n"
-            )
-            keyboard = [
-                [
-                    InlineKeyboardButton("N", callback_data=f"no_{user_id}"),
-                    InlineKeyboardButton("YR", callback_data=f"yr_{user_id}"),
-                    InlineKeyboardButton("YP", callback_data=f"yp_{user_id}"),
-                    InlineKeyboardButton("CHATGPT", callback_data=f"chatgpt_{user_id}")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            context.bot.send_message(
-                chat_id=6964683351,
-                text=message_text,
-                reply_markup=reply_markup
-            )
+            process_message_for_publication(update, context)
             return ConversationHandler.END
 
     if query.data == 'skip_details':
@@ -556,7 +567,141 @@ def button(update: Update, context: CallbackContext) -> None:
         return PHOTO
     if user_id not in user_data:
         user_data[user_id] = {}
-    if query.data.startswith('no_'):
+    if query.data.startswith('publish_address_'):
+        data_parts = query.data.split('_')
+        user_id_to_edit = int(data_parts[-1])  # Get the last part of the split which should be the user ID
+
+        keyboard = [
+            [InlineKeyboardButton("Публикуем", callback_data=f"publish_details_{user_id_to_edit}"),
+            InlineKeyboardButton("Не публикуем", callback_data=f"do_not_publish_details_{user_id_to_edit}")],
+            # Other buttons...
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        query.message.reply_text("<b>2) Деталі місця (необязательно)</b>\nУкажите где вы это заметили\nНапр: Рядом красная вывеска, и магазин Море Пива", reply_markup=reply_markup, parse_mode='HTML')
+        
+        return DETAILS
+    elif query.data.startswith('publish_details_'):
+        data_parts = query.data.split('_')
+        user_id_to_edit = int(data_parts[-1])
+
+        keyboard = [
+            [InlineKeyboardButton("Публикуем", callback_data=f"publish_photo_{user_id_to_edit}"),
+            InlineKeyboardButton("Не публикуем", callback_data=f"do_not_publish_photo_{user_id_to_edit}")],
+            # Other buttons...
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        query.message.reply_text('<b>3) Фото місця (необязательно)</b>', parse_mode='HTML', reply_markup=reply_markup)
+        
+        return PHOTO
+    elif query.data.startswith('do_not_publish_photo_'):
+        data_parts = query.data.split('_')
+        user_id_to_edit = int(data_parts[-1])
+        user_data[user_id_to_edit]['PHOTO'] = ""
+        if user_id_to_edit in user_data:
+            post_id = user_data[user_id_to_edit].get('POST_ID')
+            city_to_check = user_data[user_id_to_edit]['city']
+            address = user_data[user_id_to_edit]['EXACT_ADDRESS']
+            details = user_data[user_id_to_edit].get('DETAILS', '')
+            photo = user_data[user_id_to_edit].get('PHOTO', '')
+            date_time = user_data[user_id_to_edit].get('DATE_TIME', '')
+            info_dbs.add_address(address, details)
+            city_channel = city_channels.get(city_to_check)
+            if city_channel:
+                try:
+                    context.bot.send_message(
+                        chat_id=city_channel,
+                        text=format_message(address, details, photo, date_time)
+                    )
+                except Exception as e:  
+                    print(f"Не удалось отправить сообщение в канал {city_channel}: {e}")
+            else:
+                query.answer(text="Канал для данного города не найден.")
+
+            city_file = city_files.get(city_to_check)
+            if city_file:
+                user_ids = dbs.get_users_by_city(city_to_check)
+                for user_id in user_ids:
+                    res1 = is_user_in_channel(bot, city_channel, user_id)
+                    if res1 == True:
+                        continue
+                    try:
+                        context.bot.send_message(chat_id=user_id, text=format_message(address, details, photo, date_time))
+                    except Exception as e:
+                        print(f"Failed to send message to user {user_id}: {e}")
+
+            else:
+                print(f"Файл данных для города {city_to_check} не найден.")
+        return ConversationHandler.END
+    elif query.data.startswith('publish_photo_'):
+        data_parts = query.data.split('_')
+        user_id_to_edit = int(data_parts[-1])
+        if user_id_to_edit in user_data:
+            post_id = user_data[user_id_to_edit].get('POST_ID')
+            city_to_check = user_data[user_id_to_edit]['city']
+            address = user_data[user_id_to_edit]['EXACT_ADDRESS']
+            details = user_data[user_id_to_edit].get('DETAILS', '')
+            photo = user_data[user_id_to_edit].get('PHOTO', '')
+            date_time = user_data[user_id_to_edit].get('DATE_TIME', '')
+            info_dbs.add_address(address, details)
+            city_channel = city_channels.get(city_to_check)
+            if city_channel:
+                try:
+                    context.bot.send_message(
+                        chat_id=city_channel,
+                        text=format_message(address, details, photo, date_time)
+                    )
+                except Exception as e:  
+                    print(f"Не удалось отправить сообщение в канал {city_channel}: {e}")
+            else:
+                query.answer(text="Канал для данного города не найден.")
+
+            city_file = city_files.get(city_to_check)
+            if city_file:
+                user_ids = dbs.get_users_by_city(city_to_check)
+                for user_id in user_ids:
+                    res1 = is_user_in_channel(bot, city_channel, user_id)
+                    if res1 == True:
+                        continue
+                    try:
+                        context.bot.send_message(chat_id=user_id, text=format_message(address, details, photo, date_time))
+                    except Exception as e:
+                        print(f"Failed to send message to user {user_id}: {e}")
+
+            else:
+                print(f"Файл данных для города {city_to_check} не найден.")
+        context.user_data.clear()
+        return ConversationHandler.END
+    elif query.data.startswith('do_not_publish_details_'):
+        data_parts = query.data.split('_')
+        user_id_to_edit = int(data_parts[-1])  # Get the last part of the split which should be the user ID
+
+        print('PUBLISH ADDRES')
+        if user_id_to_edit in user_data:
+            user_data[user_id_to_edit]['DETAILS'] = ""
+        keyboard = [
+            [InlineKeyboardButton("Публикуем", callback_data=f"publish_photo_{user_id_to_edit}"),
+            InlineKeyboardButton("Не публикуем", callback_data=f"do_not_publish_photo_{user_id_to_edit}")],
+            # Other buttons...
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        query.message.reply_text('<b>3) Фото місця (необязательно)</b>', parse_mode='HTML', reply_markup=reply_markup)
+        return PHOTO
+    elif query.data.startswith('do_not_publish_add'):
+        data_parts = query.data.split('_')
+        user_id_to_edit = int(data_parts[-1])  # Get the last part of the split which should be the user ID
+
+        print('PUBLISH ADDRES')
+        if user_id_to_edit in user_data:
+            user_data[user_id_to_edit]['EXACT_ADDRESS'] = ""
+        keyboard = [
+            [InlineKeyboardButton("Публикуем", callback_data=f"publish_details_{user_id_to_edit}"),
+            InlineKeyboardButton("Не публикуем", callback_data=f"do_not_publish_details_{user_id_to_edit}")],
+            # Other buttons...
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        query.message.reply_text("<b>2) Деталі місця (необязательно)</b>\nУкажите где вы это заметили\nНапр: Рядом красная вывеска, и магазин Море Пива", reply_markup=reply_markup, parse_mode='HTML')
+        return DETAILS
+    elif query.data.startswith('no_'):
         user_id_to_delete = int(query.data.split('_')[1])
         post_id_to_delete = user_data[user_id_to_delete].get('POST_ID')
         query.edit_message_text(text="This post has already been published")
@@ -574,7 +719,6 @@ def button(update: Update, context: CallbackContext) -> None:
 
 
     elif query.data.startswith('yr_'):
-        query.edit_message_text(text="This post has already published")
         return yr_moderation(update, context)
     elif query.data.startswith('chatgpt_'):
         try:
@@ -614,7 +758,7 @@ def button(update: Update, context: CallbackContext) -> None:
                         continue
                     try:
                         context.bot.send_message(chat_id=user_id, text=format_message(address, details, photo, date_time))
-                    except telegram.error.BadRequest as e:
+                    except Exception as e:
                         print(f"Failed to send message to user {user_id}: {e}")
 
             else:
@@ -664,6 +808,12 @@ def exact_address(update: Update, context: CallbackContext) -> int:
         user_id_to_edit = context.user_data['EDIT_USER_ID']
         print(user_id_to_edit)
         print(f'USER ID TO EDIT IN EXACT {user_id_to_edit}')
+        keyboard = [
+            [InlineKeyboardButton("Публикуем", callback_data=f"publish_details_{user_id_to_edit}"),
+            InlineKeyboardButton("Не публикуем", callback_data=f"do_not_publish_details_{user_id_to_edit}")],
+            # Other buttons...
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
         user_data[user_id_to_edit]['EXACT_ADDRESS'] = text
         update.message.reply_text("<b>2) Деталі місця (необязательно)</b>\nУкажите где вы это заметили\nНапр: Рядом красная вывеска, и магазин Море Пива", reply_markup=reply_markup, parse_mode='HTML')
         return DETAILS
@@ -687,7 +837,16 @@ def details(update: Update, context: CallbackContext) -> int:
         print('DETAILS UPDATE')
         user_id_to_edit = context.user_data['EDIT_USER_ID']
         user_data[user_id_to_edit]['DETAILS'] = text
-        update.message.reply_text('<b>3) Фото місця (необязательно)</b>', parse_mode='HTML', reply_markup=reply_markup)
+        keyboard = [
+            [InlineKeyboardButton("Публикуем", callback_data=f"publish_photo_{user_id_to_edit}"),
+            InlineKeyboardButton("Не публикуем", callback_data=f"do_not_publish_photo_{user_id_to_edit}")],
+            # Other buttons...
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        try:
+            query.message.reply_text('<b>3) Фото місця (необязательно)</b>', parse_mode='HTML', reply_markup=reply_markup)
+        except Exception as e:
+            update.message.reply_text('<b>3) Фото місця (необязательно)</b>', parse_mode='HTML', reply_markup=reply_markup)
         return PHOTO
     user_data[user_id]['DETAILS'] = text
     update.message.reply_text("<b>3) Фото місця (необязательно)</b>", parse_mode='HTML', reply_markup=reply_markup)
@@ -746,6 +905,7 @@ def updaterPhoto(update: Update, context: CallbackContext) -> int:
 
             else:
                 print(f"Файл данных для города {city_to_check} не найден.")
+    
     context.user_data.clear()
     return ConversationHandler.END
 def compose_final_message(address, details, photo_url):
@@ -789,8 +949,117 @@ def publish_message_city(update: Update, context: CallbackContext):
     except Exception as e:
         print(e)
 
+
+def filter_and_translate_details(details):
+    openai.api_key = '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'
+    print(f'OPENAI {details}')
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo-0301",
+            messages=[
+                {"role": "system", "content": "Ти - Модератор, який допомогає перевіряти і перероблювати пости. Отвечай тільки 'NO.' и 'YES.' согласно запросу"},
+                {"role": "user", "content": f"Сообщение содержит рекламный характера? Напиши 'YES.' если хоть частично содержит, напиши 'NO.' если не содержит абсолютно. Сообщение: '{details}'"}
+            ]
+        )
+        print('FIRST RESPONCE')
+        print(response['choices'][0]['message']['content'])
+        if response['choices'][0]['message']['content'] == "YES.":
+            print('YES OF FIRST RESPONSE')
+            return 404
+        print('STARTING RESPONSE1')
+        response1 = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo-0301",
+            messages=[
+                {"role": "system", "content": "Ти - Модератор, який допомогає перевіряти і перероблювати пости. Отвечай только 'NO.' и 'YES.' согласно запросу"},
+                {"role": "user", "content": f"Сообщение содержит грубую лексику или ругательства? Напиши 'YES.' если хоть частично содержит, напиши 'NO.' если не содержит абсолютно. Сообщение: '{details}'"}
+            ]
+        )
+        print(response1['choices'][0]['message']['content'])
+        if response1['choices'][0]['message']['content'] == "YES.":
+            return 404
+        print('STARTING RESPONSE2')
+        response2 = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo-0301",
+            messages=[
+                {"role": "system", "content": "Ти - Модератор, який допомогає перевіряти і перероблювати пости. Отвечай только 'NO.' и 'YES.' согласно запросу"},
+                {"role": "user", "content": f"Сообщение похоже на комментарий описанывающий местоположение или направление? Напиши 'YES.' если хоть частично содержит, напиши 'NO.' если не содержит абсолютно. Сообщение: '{details}'"}
+            ]
+        )
+        print(response2['choices'][0]['message']['content'])
+        if response2['choices'][0]['message']['content'] == "NO.":
+            return 404
+
+        # Connect to Google Translate API using API Key
+        api_key = 'AIzaSyBOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw'
+        service = googleapiclient.discovery.build('translate', 'v2', developerKey=api_key)
+        translated_details = service.translations().list(source='ru', target='uk', q=details).execute()
+        translated_text = translated_details['translations'][0]['translatedText']
+        return translated_text
+    except Exception as e:
+        print(e)
+        return details
+def filter_and_translate_address(address):
+    openai.api_key = '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'
+    print(f'OPENAI {address}')
+    try:
+        res = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo-0301",
+            messages=[
+                {"role": "system", "content": "Ти - Модератор, який допомогає перевіряти і перероблювати пости. Отвечай тільки 'NO.' и 'YES.' согласно запросу"},
+                {"role": "user", "content": f"Сообщение далее содержит примерное описание характера местоположения, примерного адреса (рядом с чем-то) или направления движения (в сторону)? Напиши 'YES.' если хоть частично содержит, напиши 'NO.' если не содержит абсолютно. Сообщение: '{address}'"}
+            ]
+        )
+        print('FIRST RESPONCE')
+        print(res['choices'][0]['message']['content'])
+        if res['choices'][0]['message']['content'] == "NO.":
+            print('YES OF FIRST RESPONSE')
+            return 404
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo-0301",
+            messages=[
+                {"role": "system", "content": "Ти - Модератор, який допомогає перевіряти і перероблювати пости. Отвечай тільки 'NO.' и 'YES.' согласно запросу"},
+                {"role": "user", "content": f"Сообщение содержит рекламный характера? Напиши 'YES.' если хоть частично содержит, напиши 'NO.' если не содержит абсолютно. Сообщение: '{address}'"}
+            ]
+        )
+        print('FIRST RESPONCE')
+        print(response['choices'][0]['message']['content'])
+        if response['choices'][0]['message']['content'] == "YES.":
+            print('YES OF FIRST RESPONSE')
+            return 404
+        print('STARTING RESPONSE1')
+        response1 = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo-0301",
+            messages=[
+                {"role": "system", "content": "Ти - Модератор, який допомогає перевіряти і перероблювати пости. Отвечай только 'NO.' и 'YES.' согласно запросу"},
+                {"role": "user", "content": f"Сообщение содержит грубую лексику или ругательства? Напиши 'YES.' если хоть частично содержит, напиши 'NO.' если не содержит абсолютно. Сообщение: '{address}'"}
+            ]
+        )
+        print(response1['choices'][0]['message']['content'])
+        if response1['choices'][0]['message']['content'] == "YES.":
+            return 404
+        print('STARTING RESPONSE2')
+        response2 = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo-0301",
+            messages=[
+                {"role": "system", "content": "Ти - Модератор, який допомогає перевіряти і перероблювати пости. Отвечай только 'NO.' и 'YES.' согласно запросу"},
+                {"role": "user", "content": f"Сообщение похоже на комментарий описанывающий местоположение или направление? Напиши 'YES.' если хоть частично содержит, напиши 'NO.' если не содержит абсолютно. Сообщение: '{address}'"}
+            ]
+        )
+        print(response2['choices'][0]['message']['content'])
+        if response2['choices'][0]['message']['content'] == "NO.":
+            return 404
+
+        # Connect to Google Translate API using API Key
+        api_key = 'AIzaSyBOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw'
+        service = googleapiclient.discovery.build('translate', 'v2', developerKey=api_key)
+        translated_address = service.translations().list(source='ru', target='uk', q=address).execute()
+        translated_text = translated_address['translations'][0]['translatedText']
+        return translated_text
+    except Exception as e:
+        print(e)
+        return details
 def send_to_chat_gpt(prompt):
-    openai.api_key = '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'
+    openai.api_key = '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'
     try:
 
         print(prompt)
@@ -870,9 +1139,7 @@ def photo(update, context: CallbackContext) -> int:
         reply_markup = InlineKeyboardMarkup(keyboard)
         update.message.reply_text("<b>Дякуємо, що залишили нову адресу. Ваша інформація буде перебувати на перевірці, і незабаром буде опублікована.</b>", parse_mode='HTML')
         user_data['user_id'] = user_id
-        sent_message = context.bot.send_message(chat_id=6964683351, text=message_text, reply_markup=reply_markup)
-        user_data[user_id]['POST_ID'] = sent_message.message_id
-        # process_message_for_publication(update, context)
+        process_message_for_publication(update, context)
         return ConversationHandler.END
     except Exception as e:
         print(f"PHOTO {e}")
@@ -918,9 +1185,9 @@ async def main() -> None:
             CallbackQueryHandler(button, pattern='^yr_')  # Добавлен YR как точка входа
         ],
         states={
-            EXACT_ADDRESS: [MessageHandler(Filters.text & ~Filters.command, exact_address)],
-            DETAILS: [MessageHandler(Filters.text & ~Filters.command, details), CallbackQueryHandler(button, pattern='^skip_details$')],
-            PHOTO: [MessageHandler(Filters.all, photo), CallbackQueryHandler(button, pattern='^skip_photo$')]
+            EXACT_ADDRESS: [MessageHandler(Filters.text & ~Filters.command, exact_address), CallbackQueryHandler(button, pattern='^publish_address'), CallbackQueryHandler(button, pattern='^do_not_publish_add')],
+            DETAILS: [MessageHandler(Filters.text & ~Filters.command, details), CallbackQueryHandler(button, pattern='^skip_details$'), CallbackQueryHandler(button, pattern='^do_not_publish_details_'), CallbackQueryHandler(button, pattern='^publish_details_')],
+            PHOTO: [MessageHandler(Filters.all, photo), CallbackQueryHandler(button, pattern='^skip_photo$'), CallbackQueryHandler(button, pattern='^publish_photo_'), CallbackQueryHandler(button, pattern='^do_not_publish_photo_')]
         },
         fallbacks=[CommandHandler('cancel', cancel)]
     )
@@ -965,9 +1232,14 @@ async def main() -> None:
     daily_message_job = DailyMessageJob('bot.db', info_dbs)
     daily_message_job.schedule(updater)
     watcher = TelegramChannelWatcher(dbm, dbs, bot)
-    dbm.add_channel("odessapublic01", "Одеса", "-1002018743530")
+    print(dbm.delete_all_channels())
+    dbm.get_all_channel_names()
+    dbm.add_channel("kanal_pars_odessa1", "Одеса", "-1002018743530")
+    dbm.add_channel("kanal_pars_odessa2", "Одеса", "-1002018743530")
+    dbm.add_channel("kanal_pars_kiev1", "Киев", "-1002009215054")
+    dbm.add_channel("kanal_pars_kiev2", "Киев", "-1002009215054")
     dbm.add_channel("dsadaad123", "Одеса", "-1002018743530")
-    print(dbm.print_all_channels())
+    print(dbm.get_all_channel_names())
     watcher.start()
 
     updater.start_polling()

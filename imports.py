@@ -29,3 +29,5 @@ from hashlib import md5
 import openai
 import logging
 from other import *
+import googleapiclient.discovery
+import google.auth.transport.requests

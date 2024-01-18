@@ -52,3 +52,9 @@ class ChannelDB:
         result = cursor.fetchone()
         conn.close()
         return result
+    def delete_all_channels(self):
+        conn = sqlite3.connect(self.db_file)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM channels")
+        conn.commit()  # Добавьте commit для сохранения изменений
+        conn.close()

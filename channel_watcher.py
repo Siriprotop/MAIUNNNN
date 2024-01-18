@@ -8,6 +8,7 @@ import logging
 from database import DataBase
 from other import *
 from config import channelsss
+import googleapiclient
 
 class TelegramChannelWatcher:
     def __init__(self, dbm, dbs, bot):
@@ -32,29 +33,76 @@ class TelegramChannelWatcher:
             except Exception as e:
                 print(f"Ошибка при отправке сообщения пользователю {user_id}: {e}")
     def chat_gpt_query(self, message):
-        openai.api_key = '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'
+        openai.api_key = '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'
+        print(f'OPENAI {message}')
         try:
+            res = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo-0301",
+                messages=[
+                    {"role": "system", "content": "Ти - Модератор, який допомогає перевіряти і перероблювати пости. Отвечай тільки 'NO.' и 'YES.' согласно запросу"},
+                    {"role": "user", "content": f"Сообщение далее содержит примерное описание характера местоположения, примерного адреса (рядом с чем-то) или направления движения (в сторону)? Напиши 'YES.' если хоть частично содержит, напиши 'NO.' если не содержит абсолютно. Сообщение: '{message}'"}
+                ]
+            )
+            print('FIRST RESPONCE')
+            print(res['choices'][0]['message']['content'])
+            if res['choices'][0]['message']['content'] == "NO.":
+                print('YES OF FIRST RESPONSE')
+                return 404
+            rs1 = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo-0301",
+                messages=[
+                    {"role": "system", "content": "Ти - Модератор, який допомогає перевіряти і перероблювати пости. Отвечай тільки 'NO.' и 'YES.' согласно запросу"},
+                    {"role": "user", "content": f"Сообщение в кавычках: '{message}' вопросительное? Напиши 'YES.' если вопросительное, напиши 'NO.' если нет."}
+                ]
+            )
+            print('FIRST RESPONCE')
+            print(rs1['choices'][0]['message']['content'])
+            if rs1['choices'][0]['message']['content'] == "YES.":
+                print('YES OF FIRST RESPONSE')
+                return 404
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo-0301",
                 messages=[
-                    {"role": "system", "content": "Ти - Модератор, який допомогає перевіряти і перероблювати пости."},
-                    {"role": "user", "content": f"Сообщение далее содержит примерное описание характера местоположения, примерного адреса или направления движения? Напиши YES если хоть частично содержит, напиши NO если не содержит абсолютно. Сообщение: {message}"}
+                    {"role": "system", "content": "Ти - Модератор, який допомогає перевіряти і перероблювати пости. Отвечай тільки 'NO.' и 'YES.' согласно запросу"},
+                    {"role": "user", "content": f"Сообщение содержит рекламный характера? Напиши 'YES.' если хоть частично содержит, напиши 'NO.' если не содержит абсолютно. Сообщение: '{message}'"}
                 ]
             )
-            first_response = response['choices'][0]['message']['content']
-            if "YES" in first_response.upper():
-                moderated_response = openai.ChatCompletion.create(
-                    model="gpt-3.5-turbo-0301",
-                    messages=[
-                        {"role": "system", "content": "Ти - Модератор, який допомогає перевіряти і перероблювати пости."},
-                        {"role": "user", "content": f"Візьми це повідомлення: '{message}', та проведи модерацію та виправлення, а саме: Видали з тексту всі образи, лайки та сленги. Прибери всі спец.символи, теги, посилання. Переклади текст українською. Залиш тільки адрес і город і важну інформацію, і все. Без всяких лишних комментариев"}
-                    ]
-                )
-                return moderated_response['choices'][0]['message']['content']
-            return first_response
+            print('FIRST RESPONCE')
+            print(response['choices'][0]['message']['content'])
+            if response['choices'][0]['message']['content'] == "YES.":
+                print('YES OF FIRST RESPONSE')
+                return 404
+            print('STARTING RESPONSE1')
+            response1 = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo-0301",
+                messages=[
+                    {"role": "system", "content": "Ти - Модератор, який допомогає перевіряти і перероблювати пости. Переробляй пост і давай відповідь тільки пекреробленим постом згідно з запросом, без коментарієв"},
+                    {"role": "user", "content": f"Сообщение далее содержит примерное описание характера местоположения, примерного адреса (рядом с чем-то) или направления движения (в сторону)? Удали все лишнее из него, и оставь только описание места. Не пиши комментарии или примечания к ответу. Удали слова оливки и маслинки. Сообщение:'{message}'"}
+                ]
+            )
+
+            main_message = (response1['choices'][0]['message']['content'])
+            print('STARTING RESPONSE2')
+            response2 = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo-0301",
+                messages=[
+                    {"role": "system", "content": "Ти - Модератор, який допомогає перевіряти і перероблювати пости. Отвечай только 'NO.' и 'YES.' согласно запросу"},
+                    {"role": "user", "content": f"Сообщение далее содержит подсказку местоположения? Напиши 'YES.' если хоть частично содержит, напиши 'NO.' если не содержит абсолютно. Сообщение:'{main_message}'"}
+                ]
+            )
+            print(response2['choices'][0]['message']['content'])
+            if response2['choices'][0]['message']['content'] == "NO.":
+                return 404
+
+            # Connect to Google Translate API using API Key
+            api_key = 'AIzaSyBOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw'
+            service = googleapiclient.discovery.build('translate', 'v2', developerKey=api_key)
+            translated_address = service.translations().list(source='ru', target='uk', q=main_message).execute()
+            translated_text = translated_address['translations'][0]['translatedText']
+            return translated_text
         except Exception as e:
-            print(f"Ошибка при запросе к GPT: {e}")
-            return "NO"
+            print(e)
+            return message
 
     def start(self):
         thread = Thread(target=self.run, args=())
@@ -78,14 +126,15 @@ class TelegramChannelWatcher:
                 if self.db.is_new_message(channel_name, message_hash):
                     self.db.update_last_message(channel_name, message_hash)
                     gpt_response = self.chat_gpt_query(message.content)
-                    if gpt_response != "NO":
-                        self.db.save_message(gpt_response, message.url, channel_name)
-                        print(f"Отфильтрованное и модерированное сообщение в канале {channel_name}: {gpt_response}")
-                        self.db.print_messages_from_db()
-                        self.send_message_to_users(gpt_response, channel_name)
-                        self.send_message_to_channels(gpt_response, channel_name)
-                    else:
-                        print(f"Сообщение из канала {channel_name} не содержит адреса или направления.")
+                    if gpt_response == 404:
+                        print("ПОСТ НЕ ПОДХОДИТ")
+                        return
+                    
+                    self.db.save_message(gpt_response, message.url, channel_name)
+                    print(f"Отфильтрованное и модерированное сообщение в канале {channel_name}: {gpt_response}")
+                    self.db.print_messages_from_db()
+                    self.send_message_to_users(gpt_response, channel_name)
+                    self.send_message_to_channels(gpt_response, channel_name)
                 break
         except Exception as e:
             print(f"Ошибка при получении сообщений из канала {channel_name}: {e}")
