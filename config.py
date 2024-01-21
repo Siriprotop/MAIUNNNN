@@ -51,7 +51,8 @@ channelsss =  {
     '-1002062185937'
 }
 
-
+user_data = {}
+channel_data = {}
 city_files = {
     "Київ": "Kyiv.json",
     "Харків": "Kharkiv.json",
@@ -131,3 +132,4 @@ file_names = [
 
 api_id = 29586810
 api_hash = '200318c4007974487333005f24002075'
+bot = None

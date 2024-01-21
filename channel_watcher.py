@@ -7,8 +7,9 @@ import openai
 import logging
 from database import DataBase
 from other import *
-from config import channelsss
+from config import channelsss, channel_data
 import googleapiclient
+from main3 import *
 
 class TelegramChannelWatcher:
     def __init__(self, dbm, dbs, bot):
@@ -33,7 +34,7 @@ class TelegramChannelWatcher:
             except Exception as e:
                 print(f"Ошибка при отправке сообщения пользователю {user_id}: {e}")
     def chat_gpt_query(self, message):
-        openai.api_key = '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'
+        openai.api_key = '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'
         print(f'OPENAI {message}')
         try:
             res = openai.ChatCompletion.create(
@@ -94,12 +95,42 @@ class TelegramChannelWatcher:
             if response2['choices'][0]['message']['content'] == "NO.":
                 return 404
 
-            # Connect to Google Translate API using API Key
+            response_addr = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo-0301",
+                messages=[
+                    {"role": "system", "content": "Ти - Модератор, який переробляє пости. Перероблюй пости на їхні адреса і коментари. Адресу вказуй без слова 'Адреса:' а одразу пиши адрессу з цього тексту"},
+                    {"role": "user", "content": f"Забери з цього тексту тільки адресу, тільки адресу і не добавляй нічого лишнього\nТекст: {message}"}
+                ]
+            )
+
+
+            response_details = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo-0301",
+                messages=[
+                    {"role": "system", "content": "Ти - Модератор, який переробляє пости. Перероблюй пости на їхні коментари. Коментар вказуй без слова 'Коментарі:' а одразу пиши коментар з цього тексту. Якщо немає коментаря, то нічого не відповіай"},
+                    {"role": "user", "content": f"Забери з цього тексту тільки коментар, тільки коментар і не добавляй нічого лишнього без 'Коментарі:' і так далі, тільки коментар. Якщо коментару немає, то нічого не пиши. Коментар наприклад 'Біля червоного магазину', і так далі, я думаю ти зрозумів. \nТекст: {message}"}
+                ]
+            )
+            addr = response_addr['choices'][0]['message']['content']
+            dtls = response_details['choices'][0]['message']['content']
+            now = datetime.now()
+            month_name = ukrainian_months[now.month]  # Ensure ukrainian_months dict is defined
+            formatted_date = now.strftime(f"%d {month_name}, %H:%M")
+            
+            # Используем специальный разделитель
+            special_delimiter = "|||"
+            processed_message = f"{addr}{special_delimiter}{dtls}{special_delimiter}{formatted_date}"
+
+            # Перевод сообщения с русского на украинский
             api_key = 'AIzaSyBOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw'
             service = googleapiclient.discovery.build('translate', 'v2', developerKey=api_key)
-            translated_address = service.translations().list(source='ru', target='uk', q=main_message).execute()
+            translated_address = service.translations().list(source='ru', target='uk', q=processed_message).execute()
             translated_text = translated_address['translations'][0]['translatedText']
-            return translated_text
+
+            # Замена специального разделителя на пропущенные строки после перевода
+            formatted_translated_text = translated_text.replace(special_delimiter, '\n') 
+            dbs.add_parsed_post(addr, dtls, formatted_date)
+            return formatted_translated_text
         except Exception as e:
             print(e)
             return message
@@ -120,6 +151,7 @@ class TelegramChannelWatcher:
 
     def fetch_last_message(self, channel_name):
         scraper = sntelegram.TelegramChannelScraper(channel_name)
+
         try:
             for message in scraper.get_items():
                 message_hash = md5(message.content.encode('utf-8')).hexdigest()
@@ -127,7 +159,24 @@ class TelegramChannelWatcher:
                     self.db.update_last_message(channel_name, message_hash)
                     gpt_response = self.chat_gpt_query(message.content)
                     if gpt_response == 404:
-                        print("ПОСТ НЕ ПОДХОДИТ")
+                        channel_info = self.dbm.get_channel_info(channel_name)
+                        channel_id = channel_info["channel_id"] if channel_info else None
+                        print(channel_id)
+                        message_text = "Опублікувати наступну адресу?\n" + message.content
+                        keyboard = [
+                            [InlineKeyboardButton("N", callback_data=f"no_post"),
+                            InlineKeyboardButton("YR", callback_data=f"yr_post"),
+                            InlineKeyboardButton("YP", callback_data=f"yp_post")]
+                        ]
+                        reply_markup = InlineKeyboardMarkup(keyboard)
+                        sent_message = self.bot.send_message(
+                            chat_id=6964683351,
+                            text=message_text,
+                            reply_markup=reply_markup
+                        )
+                        channel_data['TEXT'] = message.content
+                        channel_data['POST_ID'] = sent_message.message_id
+                        channel_data['CITY'] = channel_name
                         return
                     
                     self.db.save_message(gpt_response, message.url, channel_name)
@@ -138,6 +187,7 @@ class TelegramChannelWatcher:
                 break
         except Exception as e:
             print(f"Ошибка при получении сообщений из канала {channel_name}: {e}")
+
 
     def run(self):
         while True:
