@@ -34,7 +34,7 @@ class TelegramChannelWatcher:
             except Exception as e:
                 print(f"Ошибка при отправке сообщения пользователю {user_id}: {e}")
     def chat_gpt_query(self, message):
-        openai.api_key = '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'
+        openai.api_key = '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'
         print(f'OPENAI {message}')
         try:
             res = openai.ChatCompletion.create(
