@@ -1077,7 +1077,7 @@ def publish_message_city(update: Update, context: CallbackContext):
 
 
 def filter_and_translate_details(details):
-    openai.api_key = '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'
+    openai.api_key = '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'
     print(f'OPENAI {details}')
     try:
         response = openai.ChatCompletion.create(
@@ -1125,7 +1125,7 @@ def filter_and_translate_details(details):
         print(e)
         return details
 def filter_and_translate_address(address):
-    openai.api_key = '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'
+    openai.api_key = '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'
     print(f'OPENAI {address}')
     try:
         res = openai.ChatCompletion.create(
@@ -1185,7 +1185,7 @@ def filter_and_translate_address(address):
         print(e)
         return details
 def send_to_chat_gpt(prompt):
-    openai.api_key = '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'
+    openai.api_key = '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'
     try:
 
         print(prompt)
